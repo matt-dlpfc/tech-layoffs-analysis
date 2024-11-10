@@ -1,5 +1,8 @@
 USE layoffs_data;
 
+# --- Import dataset. I have used the Table Data Import Wizards functionality; it's just easier and more straightforward for this small dataset.
+
+## Check for unique categories in some variables.
 SELECT DISTINCT industry
 FROM layoffs;
 SELECT DISTINCT stage
@@ -66,4 +69,135 @@ FROM layoffs_staging;
 DELETE
 FROM layoffs_staging2
 WHERE record_number > 1;
+
+# --- Data standardization.
+## Trim company names (removing unnecessary white spaces).
+UPDATE layoffs_staging2
+SET company = TRIM(company);
+
+## Find redundant industry names 
+SELECT DISTINCT industry
+FROM layoffs_staging2
+ORDER BY 1;
+
+SELECT *
+FROM layoffs_staging2
+WHERE industry = 'Transportation' OR industry = 'Logistics';
+
+SELECT *
+FROM layoffs_staging2
+WHERE industry = 'Finance' OR industry = 'Fin-Tech';
+
+/* Crypto Currency and CryptoCurrency and Crypto can be the same category => merged into Crypto.
+Transportation and Logistics might seem the same category, but I concluded they are not (in this dataset) => unchanged.
+Fin-tech clearly belongs to Finance as there are only 3 cases out of 287 rows for Finance AND Fin-tech => merged into Finance.
+*/
+
+## Standarize repetitive ones
+UPDATE layoffs_staging2
+SET industry = 'Crypto'
+WHERE industry LIKE 'Crypto%';
+
+UPDATE layoffs_staging2
+SET industry = 'Finance'
+WHERE industry LIKE 'Fin-Tech';
+
+## Find redundant country names
+SELECT DISTINCT country
+FROM layoffs_staging2
+ORDER BY 1;
+
+/* United States has a record with a dot at the end => cleaned.
+*/
+UPDATE layoffs_staging2
+SET country = TRIM(TRAILING '.' FROM country) # Trailing, when used in conjuction with TRIM(), allows us to remove the specified character (a white space, by default) from a variable of choice
+WHERE country LIKE 'United States%';
+
+## Format and convert the date variable in a datetime type. This will be vital to work with time series methods.
+SELECT `date`, STR_TO_DATE(`date`, '%m/%d/%Y') # running this first to check that we guessed the format right!
+FROM layoffs_staging2;
+
+UPDATE layoffs_staging2
+SET `date` = STR_TO_DATE(`date`, '%m/%d/%Y'); # reformatting the values in the table, but NOT the data type (next).
+
+ALTER TABLE layoffs_staging2
+MODIFY COLUMN `date` DATE; # converting the data type from string to date
+
+# --- Dealing with Null and Blank values.
+SELECT * 			# checking two key values we'll use for the analysis: if they are both NULL/empty, then we could just remove them (for later).
+FROM layoffs_staging2
+WHERE total_laid_off IS NULL AND percentage_laid_off IS NULL;
+
+SELECT * 
+FROM layoffs_staging2
+WHERE industry IS NULL OR industry = ''; # There are a few cases in which known companies have no industry. That is a feasible change we could make
+
+## Impute industry value for null/empty cells based on the value of populate cells for the same company/entity.
+SELECT *
+FROM layoffs_staging2 AS ls21
+JOIN layoffs_staging2 AS ls22
+	ON ls21.company = ls22.company
+    AND ls21.location = ls22.location
+    AND ls21.country = ls22.country # Joining on multiple columns (3) to ensure that we are talking about the same company.
+WHERE ( ls21.industry ='' OR ls21.industry IS NULL) 
+	AND ( ls22.industry IS NOT NULL OR ls22.industry != '');
+
+SELECT *
+FROM layoffs_staging2
+WHERE company LIKE 'Bally\'s%'; # There is only one row for this, so it cannot lookup the actual industry from other records.
+
+/* I will set all blank values from industry as Null, and then rerun the above. This should simplify the select and update statements below.*/
+
+UPDATE layoffs_staging2
+SET industry = NULL
+WHERE industry = '';
+
+SELECT ls21.company, ls21.industry, ls22.industry
+FROM layoffs_staging2 AS ls21
+JOIN layoffs_staging2 AS ls22
+	ON ls21.company = ls22.company
+    AND ls21.location = ls22.location
+    AND ls21.country = ls22.country # Joining on multiple columns (3) to ensure that we are talking about the same company.
+WHERE ls21.industry IS NULL 
+	AND ls22.industry IS NOT NULL;
+    
+UPDATE layoffs_staging2 AS ls21
+JOIN layoffs_staging2 AS ls22
+	ON ls21.company = ls22.company
+    AND ls21.location = ls22.location
+    AND ls21.country = ls22.country
+SET ls21.industry = ls22.industry
+WHERE ls21.industry IS NULL 
+	AND ls22.industry IS NOT NULL; # Updating those values by looking up the other (populated) row with the null cell.
+    
+
+# --- Removing unnecessary columns and rows (e.g. all nulls in key values).
+
+## Find and decide what to do about "substantially missing" data.
+SELECT *
+FROM layoffs_staging2
+WHERE percentage_laid_off IS NULL AND total_laid_off IS NULL;
+
+/* 361 rows seem to have both columns as NULL (no empty cells found).
+By quickly looking at the stage, it doesn't seem that the distribution of NULL values is random.
+I will check this by comparing the relative distribution of null values by stage, partitioned by whether they are BOTH NULL or else.
+*/
+## Check and compare the distribution of missing values across stages.
+
+WITH null_cte AS (
+	SELECT *, CASE
+		WHEN total_laid_off IS NULL AND percentage_laid_off IS NULL THEN 'null'
+		ELSE 'not null' END AS check_if_null
+	FROM layoffs_staging2
+    )
+SELECT stage, COUNT(stage)
+FROM null_cte
+GROUP BY stage
+ORDER BY stage; # Need to continue...
+
+SELECT *, CASE
+	WHEN total_laid_off IS NULL AND percentage_laid_off IS NULL THEN 'null'
+    ELSE 'not null' END AS check_if_null
+FROM layoffs_staging2;
+
 
