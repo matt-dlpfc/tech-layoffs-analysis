@@ -38,3 +38,6 @@ git clone https://github.com/matt-dlpfc/tech-layoffs-analysis.git
 
 ## License
 [MIT](https://choosealicense.com/licenses/mit/)
+
+## Changelog
+[See CHANGELOG.md for details](CHANGELOG.md)
