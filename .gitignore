@@ -24,7 +24,6 @@ wheels/
 # Virtual Environment
 venv/
 ENV/
-data/
 
 # IDE specific files
 .idea/
